@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
-  <title>Roleplay Chat Box</title>
+  <title>Roleplay Chat Box v2.1</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -13,8 +13,8 @@
   <div class="app-shell">
     <header class="topbar">
       <div>
-        <h1>Roleplay Chat Box</h1>
-        <p class="subtitle">GitHub Pages 可部署版</p>
+        <h1>Roleplay Chat Box v2.1</h1>
+        <p class="subtitle">修正 DeepSeek 默认值，优先读取角色卡内嵌世界书</p>
       </div>
       <button id="settingsToggle" class="ghost-btn" aria-label="打开设置">设置</button>
     </header>
@@ -24,13 +24,13 @@
         <section class="card">
           <h2>API 设置</h2>
           <label>API Base URL
-            <input id="apiBase" type="text" placeholder="https://api.openai.com/v1" />
+            <input id="apiBase" type="text" placeholder="https://api.deepseek.com" />
           </label>
           <label>API Key
             <input id="apiKey" type="password" placeholder="sk-..." />
           </label>
           <label>Model
-            <input id="modelName" type="text" placeholder="gpt-4o-mini" />
+            <input id="modelName" type="text" placeholder="deepseek-v4-flash" />
           </label>
           <label>System Prompt
             <textarea id="systemPrompt" rows="4" placeholder="可选：额外系统提示"></textarea>
@@ -39,7 +39,17 @@
             <button id="saveSettings" class="primary-btn">保存设置</button>
             <button id="clearSettings" class="ghost-btn">清空</button>
           </div>
-          <p class="note">当前版本会把 API key 保存在你的浏览器本地，仅适合个人自用原型。</p>
+        </section>
+
+        <section class="card">
+          <h2>用户 Persona</h2>
+          <label>User Name
+            <input id="userName" type="text" placeholder="例如：Alex" />
+          </label>
+          <label>User Persona
+            <textarea id="userPersona" rows="4" placeholder="例如：冷静、喜欢技术和游戏开发、会追问细节。"></textarea>
+          </label>
+          <p class="note">用于替换 {{user}}、{{persona}} 等占位符。</p>
         </section>
 
         <section class="card">
@@ -48,10 +58,27 @@
             <input id="cardFileInput" type="file" accept=".json,.png,image/png" />
           </label>
           <div id="characterInfo" class="character-box empty">尚未导入角色卡</div>
-          <div class="row gap">
+          <div class="row gap wrap top-gap">
             <button id="useFirstMessage" class="ghost-btn">插入开场白</button>
+            <button id="toggleCardDetails" class="ghost-btn">查看卡内扩展</button>
             <button id="clearCharacter" class="ghost-btn danger">清空角色</button>
           </div>
+          <details id="cardDetails" class="details-box top-gap">
+            <summary>角色卡扩展 / 内嵌世界书</summary>
+            <pre id="cardDetailsText">暂无内容</pre>
+          </details>
+        </section>
+
+        <section class="card">
+          <h2>世界书 / 模板</h2>
+          <div id="lorebookInfo" class="character-box empty">尚未检测到世界书</div>
+          <label class="top-gap">Prompt Template
+            <textarea id="promptTemplate" rows="8" placeholder="可编辑最终系统模板"></textarea>
+          </label>
+          <p class="note">优先读取角色卡内嵌 character book / lorebook；仍可额外导入外部世界书作为覆盖。</p>
+          <label class="top-gap">额外导入世界书（可选 JSON）
+            <input id="lorebookInput" type="file" accept="application/json,.json" />
+          </label>
         </section>
 
         <section class="card">
@@ -64,7 +91,6 @@
             </label>
             <button id="clearChat" class="ghost-btn danger">清空聊天</button>
           </div>
-          <p class="note">导出的 JSON 会包含设置、当前角色和聊天记录。</p>
         </section>
       </aside>
 
