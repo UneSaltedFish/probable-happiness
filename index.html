@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Roleplay Chat Box</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>Roleplay Chat Box</h1>
+        <p class="subtitle">GitHub Pages 可部署版</p>
+      </div>
+      <button id="settingsToggle" class="ghost-btn" aria-label="打开设置">设置</button>
+    </header>
+
+    <main class="layout">
+      <aside id="settingsPanel" class="panel settings-panel hidden-mobile">
+        <section class="card">
+          <h2>API 设置</h2>
+          <label>API Base URL
+            <input id="apiBase" type="text" placeholder="https://api.openai.com/v1" />
+          </label>
+          <label>API Key
+            <input id="apiKey" type="password" placeholder="sk-..." />
+          </label>
+          <label>Model
+            <input id="modelName" type="text" placeholder="gpt-4o-mini" />
+          </label>
+          <label>System Prompt
+            <textarea id="systemPrompt" rows="4" placeholder="可选：额外系统提示"></textarea>
+          </label>
+          <div class="row gap">
+            <button id="saveSettings" class="primary-btn">保存设置</button>
+            <button id="clearSettings" class="ghost-btn">清空</button>
+          </div>
+          <p class="note">当前版本会把 API key 保存在你的浏览器本地，仅适合个人自用原型。</p>
+        </section>
+
+        <section class="card">
+          <h2>角色</h2>
+          <label>导入角色卡（JSON / PNG）
+            <input id="cardFileInput" type="file" accept=".json,.png,image/png" />
+          </label>
+          <div id="characterInfo" class="character-box empty">尚未导入角色卡</div>
+          <div class="row gap">
+            <button id="useFirstMessage" class="ghost-btn">插入开场白</button>
+            <button id="clearCharacter" class="ghost-btn danger">清空角色</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>数据</h2>
+          <div class="row gap wrap">
+            <button id="exportData" class="primary-btn">导出数据</button>
+            <label class="import-btn ghost-btn">
+              导入数据
+              <input id="importDataInput" type="file" accept="application/json,.json" hidden />
+            </label>
+            <button id="clearChat" class="ghost-btn danger">清空聊天</button>
+          </div>
+          <p class="note">导出的 JSON 会包含设置、当前角色和聊天记录。</p>
+        </section>
+      </aside>
+
+      <section class="chat-panel panel">
+        <div id="chatMeta" class="chat-meta">未连接角色</div>
+        <div id="messages" class="messages"></div>
+        <form id="chatForm" class="composer">
+          <textarea id="userInput" rows="3" placeholder="输入消息..." required></textarea>
+          <div class="composer-actions">
+            <button type="button" id="newChatBtn" class="ghost-btn">新对话</button>
+            <button type="submit" id="sendBtn" class="primary-btn">发送</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <template id="messageTemplate">
+    <article class="message-item">
+      <div class="message-role"></div>
+      <div class="message-bubble"></div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
