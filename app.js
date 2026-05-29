@@ -1,6 +1,19 @@
-const STORAGE_KEY = 'roleplay-chatbox-state-v1';
+const STORAGE_KEY = 'roleplay-chatbox-state-v222';
 const DB_NAME = 'roleplay-chatbox-db';
 const STORE_NAME = 'messages';
+
+const DEFAULT_PROMPT_TEMPLATE = [
+  '你现在扮演角色：{{char}}',
+  '{{description_block}}',
+  '{{personality_block}}',
+  '{{scenario_block}}',
+  '{{system_prompt_block}}',
+  '{{depth_prompt_block}}',
+  '{{lorebook_block}}',
+  '{{user_persona_block}}',
+  '{{custom_system_prompt_block}}',
+  '{{post_history_block}}'
+].join('\n');
 
 const els = {
   apiBase: document.getElementById('apiBase'),
@@ -25,14 +38,24 @@ const els = {
   template: document.getElementById('messageTemplate'),
   settingsToggle: document.getElementById('settingsToggle'),
   settingsPanel: document.getElementById('settingsPanel'),
+  userName: document.getElementById('userName'),
+  userPersona: document.getElementById('userPersona'),
+  toggleCardDetails: document.getElementById('toggleCardDetails'),
+  cardDetails: document.getElementById('cardDetails'),
+  cardDetailsText: document.getElementById('cardDetailsText'),
+  lorebookInfo: document.getElementById('lorebookInfo'),
+  promptTemplate: document.getElementById('promptTemplate'),
 };
 
 let state = {
   settings: {
-    apiBase: 'https://api.openai.com/v1',
+    apiBase: 'https://api.deepseek.com',
     apiKey: '',
-    modelName: 'gpt-4o-mini',
-    systemPrompt: ''
+    modelName: 'deepseek-v4-flash',
+    systemPrompt: '',
+    userName: 'User',
+    userPersona: '',
+    promptTemplate: DEFAULT_PROMPT_TEMPLATE,
   },
   character: null,
   sessionId: crypto.randomUUID()
@@ -53,14 +76,28 @@ async function init() {
 
 function bindEvents() {
   els.saveSettings.addEventListener('click', saveSettingsFromForm);
+
   els.clearSettings.addEventListener('click', () => {
-    state.settings = { apiBase: 'https://api.openai.com/v1', apiKey: '', modelName: 'gpt-4o-mini', systemPrompt: '' };
-    persistState(); fillForm();
+    state.settings = {
+      apiBase: 'https://api.deepseek.com',
+      apiKey: '',
+      modelName: 'deepseek-v4-flash',
+      systemPrompt: '',
+      userName: 'User',
+      userPersona: '',
+      promptTemplate: DEFAULT_PROMPT_TEMPLATE,
+    };
+    persistState();
+    fillForm();
   });
+
   els.cardFileInput.addEventListener('change', onCardFileSelected);
   els.useFirstMessage.addEventListener('click', insertFirstMessage);
   els.clearCharacter.addEventListener('click', () => {
-    state.character = null; persistState(); renderCharacter(); updateMeta();
+    state.character = null;
+    persistState();
+    renderCharacter();
+    updateMeta();
   });
   els.exportData.addEventListener('click', exportAllData);
   els.importDataInput.addEventListener('change', importAllData);
@@ -75,6 +112,12 @@ function bindEvents() {
   els.settingsToggle.addEventListener('click', () => {
     els.settingsPanel.classList.toggle('open');
   });
+
+  if (els.toggleCardDetails && els.cardDetails) {
+    els.toggleCardDetails.addEventListener('click', () => {
+      els.cardDetails.open = !els.cardDetails.open;
+    });
+  }
 }
 
 function loadState() {
@@ -82,7 +125,15 @@ function loadState() {
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
-    state = { ...state, ...parsed, settings: { ...state.settings, ...(parsed.settings || {}) } };
+    state = {
+      ...state,
+      ...parsed,
+      settings: {
+        ...state.settings,
+        ...(parsed.settings || {}),
+        promptTemplate: parsed?.settings?.promptTemplate || DEFAULT_PROMPT_TEMPLATE,
+      }
+    };
   } catch (e) {
     console.error('加载本地状态失败', e);
   }
@@ -97,6 +148,9 @@ function fillForm() {
   els.apiKey.value = state.settings.apiKey || '';
   els.modelName.value = state.settings.modelName || '';
   els.systemPrompt.value = state.settings.systemPrompt || '';
+  if (els.userName) els.userName.value = state.settings.userName || 'User';
+  if (els.userPersona) els.userPersona.value = state.settings.userPersona || '';
+  if (els.promptTemplate) els.promptTemplate.value = state.settings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
 }
 
 function saveSettingsFromForm() {
@@ -104,7 +158,10 @@ function saveSettingsFromForm() {
     apiBase: els.apiBase.value.trim(),
     apiKey: els.apiKey.value.trim(),
     modelName: els.modelName.value.trim(),
-    systemPrompt: els.systemPrompt.value.trim()
+    systemPrompt: els.systemPrompt.value.trim(),
+    userName: els.userName?.value.trim() || 'User',
+    userPersona: els.userPersona?.value.trim() || '',
+    promptTemplate: els.promptTemplate?.value.trim() || DEFAULT_PROMPT_TEMPLATE,
   };
   persistState();
   alert('设置已保存到本地浏览器。');
@@ -114,16 +171,75 @@ function renderCharacter() {
   if (!state.character) {
     els.characterInfo.textContent = '尚未导入角色卡';
     els.characterInfo.classList.add('empty');
+    if (els.lorebookInfo) {
+      els.lorebookInfo.textContent = '尚未检测到世界书';
+      els.lorebookInfo.classList.add('empty');
+    }
+    if (els.cardDetailsText) els.cardDetailsText.textContent = '暂无内容';
     return;
   }
+
   const c = state.character;
   els.characterInfo.classList.remove('empty');
+
+  const presetSummary = [];
+  if (c.system_prompt) presetSummary.push('system_prompt');
+  if (c.post_history_instructions) presetSummary.push('post_history_instructions');
+  if (c.depth_prompt?.prompt) presetSummary.push(`depth_prompt@${c.depth_prompt.depth ?? 'auto'}`);
+  if ((c.lorebookEntries || []).length) presetSummary.push(`lorebook ${c.lorebookEntries.length} 条`);
+  if ((c.alternate_greetings || []).length) presetSummary.push(`alternate_greetings ${c.alternate_greetings.length} 条`);
+
+  const chosenFirst = getPreferredFirstMessage(c);
+
   els.characterInfo.textContent = [
     `名字：${c.name || '未命名角色'}`,
     c.description ? `简介：${c.description}` : '',
     c.personality ? `性格：${c.personality}` : '',
-    c.first_mes ? `开场白：${c.first_mes}` : ''
+    chosenFirst ? `开场白：${chosenFirst}` : '',
+    presetSummary.length ? `导入预设：${presetSummary.join(' / ')}` : '导入预设：无'
   ].filter(Boolean).join('\n\n');
+
+  renderLorebookInfo(c);
+  renderCardDetails(c);
+}
+
+function renderLorebookInfo(character) {
+  if (!els.lorebookInfo) return;
+  const entries = character?.lorebookEntries || [];
+  if (!entries.length) {
+    els.lorebookInfo.textContent = '尚未检测到世界书';
+    els.lorebookInfo.classList.add('empty');
+    return;
+  }
+
+  const constantCount = entries.filter(e => e.constant).length;
+  const keyedCount = entries.length - constantCount;
+  els.lorebookInfo.classList.remove('empty');
+  els.lorebookInfo.textContent = [
+    `已导入内嵌世界书：${entries.length} 条`,
+    `常驻条目：${constantCount} 条`,
+    `关键词触发：${keyedCount} 条`,
+  ].join('\n');
+}
+
+function renderCardDetails(character) {
+  if (!els.cardDetailsText) return;
+  const detail = {
+    name: character.name,
+    first_mes: character.first_mes || '',
+    alternate_greetings_count: (character.alternate_greetings || []).length,
+    system_prompt: character.system_prompt || '',
+    post_history_instructions: character.post_history_instructions || '',
+    depth_prompt: character.depth_prompt || null,
+    lorebook_preview: (character.lorebookEntries || []).slice(0, 10).map(entry => ({
+      keys: entry.keys,
+      constant: entry.constant,
+      enabled: entry.enabled,
+      order: entry.order,
+      content: entry.content,
+    })),
+  };
+  els.cardDetailsText.textContent = JSON.stringify(detail, null, 2);
 }
 
 function updateMeta() {
@@ -134,22 +250,24 @@ function updateMeta() {
 async function onCardFileSelected(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+
   try {
+    let json;
     if (file.type === 'application/json' || file.name.endsWith('.json')) {
       const text = await file.text();
-      const json = JSON.parse(text);
-      state.character = normalizeCharacter(json);
+      json = JSON.parse(text);
     } else if (file.type === 'image/png' || file.name.endsWith('.png')) {
       const buffer = await file.arrayBuffer();
-      const json = extractJsonFromPng(buffer);
-      state.character = normalizeCharacter(json);
+      json = extractJsonFromPng(buffer);
     } else {
       throw new Error('暂不支持这个文件类型');
     }
+
+    state.character = normalizeCharacter(json);
     persistState();
     renderCharacter();
     updateMeta();
-    alert('角色卡导入成功。');
+    alert('角色卡导入成功，已尝试一并导入卡内预设。');
   } catch (err) {
     console.error(err);
     alert(`导入失败：${err.message}`);
@@ -159,15 +277,151 @@ async function onCardFileSelected(event) {
 }
 
 function normalizeCharacter(data) {
-  const root = data.data ? data.data : data;
-  return {
-    name: root.name || root.char_name || '未命名角色',
-    description: root.description || root.desc || root.context || '',
-    personality: root.personality || '',
-    first_mes: root.first_mes || root.firstMessage || '',
-    mes_example: root.mes_example || '',
-    scenario: root.scenario || '',
+  const root = data?.data && typeof data.data === 'object' ? data.data : data || {};
+  const top = data || {};
+  const extensions = root.extensions || top.extensions || {};
+
+  const alternateGreetingsRaw =
+    root.alternate_greetings ||
+    root.alternateGreetings ||
+    root.alternategreetings ||
+    top.alternate_greetings ||
+    top.alternateGreetings ||
+    top.alternategreetings ||
+    [];
+
+  const lorebookEntries = normalizeLorebookEntries(
+    root.character_book ||
+    root.characterbook ||
+    root.lorebook ||
+    top.character_book ||
+    top.characterbook ||
+    top.lorebook
+  );
+
+  const firstMes = pickNonEmpty(
+    root.first_mes,
+    root.firstMessage,
+    root.firstmes,
+    top.first_mes,
+    top.firstMessage,
+    top.firstmes
+  );
+
+  const description = pickNonEmpty(root.description, root.desc, root.context, top.description, top.desc, top.context);
+  const personality = pickNonEmpty(root.personality, top.personality);
+  const scenario = pickNonEmpty(root.scenario, top.scenario);
+  const mesExample = pickNonEmpty(root.mes_example, root.mesexample, top.mes_example, top.mesexample);
+  const systemPrompt = pickNonEmpty(root.system_prompt, root.systemPrompt, root.systemprompt, top.system_prompt, top.systemPrompt, top.systemprompt);
+  const postHistory = pickNonEmpty(
+    root.post_history_instructions,
+    root.postHistoryInstructions,
+    root.posthistoryinstructions,
+    top.post_history_instructions,
+    top.postHistoryInstructions,
+    top.posthistoryinstructions
+  );
+
+  const normalized = {
+    name: pickNonEmpty(root.name, root.char_name, root.charname, top.name, top.char_name, top.charname, '未命名角色'),
+    description,
+    personality,
+    first_mes: firstMes,
+    mes_example: mesExample,
+    scenario,
+    system_prompt: systemPrompt,
+    post_history_instructions: postHistory,
+    alternate_greetings: normalizeGreetingList(alternateGreetingsRaw),
+    lorebookEntries,
+    depth_prompt: normalizeDepthPrompt(extensions),
     raw: data
+  };
+
+  if (!normalized.first_mes && normalized.alternate_greetings.length) {
+    normalized.first_mes = normalized.alternate_greetings[0];
+  }
+
+  return normalized;
+}
+
+function normalizeGreetingList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(v => String(v || '').trim()).filter(Boolean);
+}
+
+function pickNonEmpty(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function normalizeLorebookEntries(book) {
+  if (!book) return [];
+  const rawEntries = Array.isArray(book.entries)
+    ? book.entries
+    : Array.isArray(book)
+      ? book
+      : Object.values(book.entries || {});
+
+  return rawEntries
+    .map((entry, index) => normalizeLorebookEntry(entry, index))
+    .filter(Boolean)
+    .sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+}
+
+function normalizeLorebookEntry(entry, index) {
+  if (!entry) return null;
+
+  const keys = Array.isArray(entry.keys)
+    ? entry.keys
+    : Array.isArray(entry.key)
+      ? entry.key
+      : typeof entry.key === 'string'
+        ? [entry.key]
+        : [];
+
+  const secondaryKeys = Array.isArray(entry.secondary_keys)
+    ? entry.secondary_keys
+    : Array.isArray(entry.secondaryKeys)
+      ? entry.secondaryKeys
+      : [];
+
+  const content = entry.content || entry.text || entry.value || '';
+  if (!content) return null;
+
+  return {
+    id: entry.id ?? index,
+    keys: keys.filter(Boolean),
+    secondary_keys: secondaryKeys.filter(Boolean),
+    content,
+    enabled: entry.enabled !== false,
+    constant: Boolean(entry.constant),
+    selective: Boolean(entry.selective),
+    insertion_order: entry.insertion_order ?? entry.insertionOrder ?? index,
+    order: entry.order ?? entry.priority ?? 100,
+    position: entry.position || 'before_char',
+    comment: entry.comment || entry.memo || ''
+  };
+}
+
+function normalizeDepthPrompt(extensions) {
+  if (!extensions) return null;
+  const raw =
+    extensions.depth_prompt ||
+    extensions.depthPrompt ||
+    extensions.depthprompt ||
+    extensions['depth-prompt'];
+
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    return { prompt: raw, depth: 4, role: 'system' };
+  }
+
+  return {
+    prompt: raw.prompt || raw.text || '',
+    depth: Number.isFinite(raw.depth) ? raw.depth : 4,
+    role: raw.role || 'system'
   };
 }
 
@@ -175,6 +429,7 @@ function extractJsonFromPng(buffer) {
   const bytes = new Uint8Array(buffer);
   const decoder = new TextDecoder('utf-8');
   let offset = 8;
+
   while (offset < bytes.length) {
     const length = readUint32(bytes, offset);
     const type = decoder.decode(bytes.slice(offset + 4, offset + 8));
@@ -188,6 +443,7 @@ function extractJsonFromPng(buffer) {
     }
     offset = dataEnd + 4;
   }
+
   throw new Error('PNG 中没有找到可识别的角色数据。');
 }
 
@@ -198,32 +454,35 @@ function parseTextChunk(type, chunk) {
     const text = new TextDecoder('latin1').decode(chunk.slice(zero + 1));
     return tryParseCharacterJson(text);
   }
+
   if (type === 'iTXt') {
     const zero = chunk.indexOf(0);
     if (zero === -1) return null;
     let idx = zero + 1;
-    const compressionFlag = chunk[idx]; idx += 1;
+    const compressionFlag = chunk[idx];
     idx += 1;
-    const langEnd = chunk.indexOf(0, idx); if (langEnd === -1) return null;
+    idx += 1;
+    const langEnd = chunk.indexOf(0, idx);
+    if (langEnd === -1) return null;
     idx = langEnd + 1;
-    const translatedEnd = chunk.indexOf(0, idx); if (translatedEnd === -1) return null;
+    const translatedEnd = chunk.indexOf(0, idx);
+    if (translatedEnd === -1) return null;
     idx = translatedEnd + 1;
     const textBytes = chunk.slice(idx);
     if (compressionFlag !== 0) throw new Error('暂不支持压缩 iTXt');
     const text = new TextDecoder('utf-8').decode(textBytes);
     return tryParseCharacterJson(text);
   }
+
   return null;
 }
 
 function tryParseCharacterJson(text) {
   try {
-    const direct = JSON.parse(text);
-    return direct;
+    return JSON.parse(text);
   } catch (_) {}
   try {
-    const maybeBase64 = atob(text);
-    return JSON.parse(maybeBase64);
+    return JSON.parse(atob(text));
   } catch (_) {}
   return null;
 }
@@ -232,9 +491,19 @@ function readUint32(bytes, offset) {
   return (bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3];
 }
 
+function getPreferredFirstMessage(character) {
+  if (!character) return '';
+  if (character.first_mes && character.first_mes.trim()) return character.first_mes.trim();
+  if (Array.isArray(character.alternate_greetings) && character.alternate_greetings.length) {
+    return character.alternate_greetings[0];
+  }
+  return '';
+}
+
 function insertFirstMessage() {
-  if (!state.character?.first_mes) return alert('当前角色没有开场白。');
-  els.userInput.value = state.character.first_mes;
+  const first = getPreferredFirstMessage(state.character);
+  if (!first) return alert('当前角色没有开场白。');
+  els.userInput.value = applyTemplateVars(first);
   els.userInput.focus();
 }
 
@@ -242,12 +511,14 @@ async function onSend(event) {
   event.preventDefault();
   const userText = els.userInput.value.trim();
   if (!userText) return;
+
   if (!state.settings.apiBase || !state.settings.apiKey || !state.settings.modelName) {
     return alert('请先填写 API Base URL、API Key 和 Model。');
   }
 
   els.sendBtn.disabled = true;
   const pendingText = '...';
+
   try {
     await addMessage({ role: 'user', content: userText, sessionId: state.sessionId, createdAt: Date.now() });
     els.userInput.value = '';
@@ -255,6 +526,7 @@ async function onSend(event) {
 
     const messages = await getMessagesBySession(state.sessionId);
     const apiMessages = buildApiMessages(messages);
+
     await addMessage({ role: 'assistant', content: pendingText, sessionId: state.sessionId, createdAt: Date.now(), pending: true });
     await renderMessages();
 
@@ -273,21 +545,124 @@ async function onSend(event) {
 
 function buildApiMessages(existingMessages) {
   const arr = [];
-  const c = state.character;
-  const systemParts = [];
-  if (c) {
-    systemParts.push(`你现在扮演角色：${c.name || '未命名角色'}`);
-    if (c.description) systemParts.push(`角色描述：${c.description}`);
-    if (c.personality) systemParts.push(`性格：${c.personality}`);
-    if (c.scenario) systemParts.push(`场景：${c.scenario}`);
-  }
-  if (state.settings.systemPrompt) systemParts.push(state.settings.systemPrompt);
-  if (systemParts.length) arr.push({ role: 'system', content: systemParts.join('\n') });
+  const systemContent = buildSystemPrompt(existingMessages);
+  if (systemContent) arr.push({ role: 'system', content: systemContent });
 
   for (const m of existingMessages.filter(m => !m.pending)) {
     arr.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
   }
-  return arr;
+
+  return injectDepthPrompt(arr);
+}
+
+function buildSystemPrompt(existingMessages) {
+  const c = state.character;
+  const template = state.settings.promptTemplate || DEFAULT_PROMPT_TEMPLATE;
+  const loreEntries = selectLorebookEntries(c?.lorebookEntries || [], existingMessages);
+
+  const lorebookBlock = loreEntries.length
+    ? '世界书 / Lorebook：\n' + loreEntries.map((entry, index) => {
+        const keys = entry.keys?.length ? ` [keys: ${entry.keys.join(', ')}]` : '';
+        return `${index + 1}. ${entry.content}${keys}`;
+      }).join('\n')
+    : '';
+
+  const replacements = {
+    char: c?.name || '未命名角色',
+    description_block: c?.description ? `角色描述：${applyTemplateVars(c.description)}` : '',
+    personality_block: c?.personality ? `性格：${applyTemplateVars(c.personality)}` : '',
+    scenario_block: c?.scenario ? `场景：${applyTemplateVars(c.scenario)}` : '',
+    system_prompt_block: c?.system_prompt ? `角色卡 System Prompt：${applyTemplateVars(c.system_prompt)}` : '',
+    post_history_block: c?.post_history_instructions ? `角色卡 Post-History Instructions：${applyTemplateVars(c.post_history_instructions)}` : '',
+    depth_prompt_block: c?.depth_prompt?.prompt ? `角色卡 Depth Prompt：${applyTemplateVars(c.depth_prompt.prompt)}` : '',
+    lorebook_block: lorebookBlock ? applyTemplateVars(lorebookBlock) : '',
+    user_persona_block: buildUserPersonaBlock(),
+    custom_system_prompt_block: state.settings.systemPrompt ? `用户追加 System Prompt：${applyTemplateVars(state.settings.systemPrompt)}` : '',
+  };
+
+  const compiled = template.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => replacements[key] || '');
+  return cleanupPrompt(compiled);
+}
+
+function selectLorebookEntries(entries, existingMessages) {
+  if (!entries.length) return [];
+
+  const transcript = existingMessages
+    .filter(m => !m.pending)
+    .map(m => m.content)
+    .join('\n')
+    .toLowerCase();
+
+  return entries.filter(entry => {
+    if (!entry.enabled) return false;
+    if (entry.constant) return true;
+    if (!entry.keys?.length) return false;
+
+    const primaryHit = entry.keys.some(key => transcript.includes(String(key).toLowerCase()));
+    if (!entry.selective) return primaryHit;
+
+    const secondaryHit = !entry.secondary_keys?.length || entry.secondary_keys.some(key => transcript.includes(String(key).toLowerCase()));
+    return primaryHit && secondaryHit;
+  });
+}
+
+function injectDepthPrompt(messages) {
+  const depth = state.character?.depth_prompt;
+  if (!depth?.prompt) return messages;
+
+  const output = [...messages];
+  const assistantAndUserIndexes = output
+    .map((m, index) => ({ m, index }))
+    .filter(item => item.m.role !== 'system');
+
+  const insertionAfterCount = Math.max(0, Number(depth.depth) || 0);
+  const target = assistantAndUserIndexes[insertionAfterCount - 1];
+  const promptMessage = {
+    role: depth.role === 'assistant' ? 'assistant' : 'system',
+    content: applyTemplateVars(depth.prompt)
+  };
+
+  if (!target) {
+    output.splice(1, 0, promptMessage);
+    return output;
+  }
+
+  output.splice(target.index + 1, 0, promptMessage);
+  return output;
+}
+
+function buildUserPersonaBlock() {
+  const userName = state.settings.userName?.trim();
+  const userPersona = state.settings.userPersona?.trim();
+  if (!userName && !userPersona) return '';
+
+  const parts = [];
+  if (userName) parts.push(`用户名：${userName}`);
+  if (userPersona) parts.push(`用户画像：${userPersona}`);
+  return `关于 {{user}} / User：${parts.join('；')}`;
+}
+
+function cleanupPrompt(text) {
+  return text
+    .split('\n')
+    .map(line => line.trimEnd())
+    .filter((line, index, arr) => !(line === '' && arr[index - 1] === ''))
+    .join('\n')
+    .trim();
+}
+
+function applyTemplateVars(text) {
+  const userName = state.settings.userName?.trim() || 'User';
+  const charName = state.character?.name || '角色';
+  const userPersona = state.settings.userPersona?.trim() || '';
+
+  return String(text || '')
+    .replace(/{{\s*user\s*}}/gi, userName)
+    .replace(/<user>/gi, userName)
+    .replace(/{{\s*char\s*}}/gi, charName)
+    .replace(/<char>/gi, charName)
+    .replace(/{{\s*persona\s*}}/gi, userPersona)
+    .replace(/{{\s*bot\s*}}/gi, charName);
 }
 
 async function requestChatCompletion(messages) {
@@ -309,6 +684,7 @@ async function requestChatCompletion(messages) {
     const text = await response.text();
     throw new Error(`API 错误 ${response.status}: ${text}`);
   }
+
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
   if (!content) throw new Error('API 没有返回消息内容。');
@@ -347,7 +723,7 @@ async function getMessagesBySession(sessionId) {
     const store = tx();
     const index = store.index('sessionId');
     const req = index.getAll(sessionId);
-    req.onsuccess = () => resolve(req.result.sort((a,b) => a.createdAt - b.createdAt));
+    req.onsuccess = () => resolve(req.result.sort((a, b) => a.createdAt - b.createdAt));
     req.onerror = () => reject(req.error);
   });
 }
@@ -369,6 +745,7 @@ async function replaceLastPending(content) {
   const messages = await getMessagesBySession(state.sessionId);
   const pending = [...messages].reverse().find(m => m.pending);
   if (!pending) return;
+
   await new Promise((resolve, reject) => {
     const store = tx('readwrite');
     const req = store.put({ ...pending, content, pending: false });
@@ -410,7 +787,7 @@ async function exportAllData() {
   });
 
   const payload = {
-    version: 1,
+    version: 2.2,
     exportedAt: new Date().toISOString(),
     state,
     messages: allMessages
@@ -421,12 +798,22 @@ async function exportAllData() {
 async function importAllData(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+
   try {
     const text = await file.text();
     const data = JSON.parse(text);
     if (!data.state || !Array.isArray(data.messages)) throw new Error('备份格式不正确。');
 
-    state = data.state;
+    state = {
+      ...state,
+      ...data.state,
+      settings: {
+        ...state.settings,
+        ...(data.state.settings || {}),
+        promptTemplate: data?.state?.settings?.promptTemplate || DEFAULT_PROMPT_TEMPLATE,
+      }
+    };
+
     persistState();
     fillForm();
     renderCharacter();
